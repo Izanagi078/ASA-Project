@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence, useSpring, useTransform, useMotionValue } from "framer-motion";
 import { 
   Activity, Upload, Database, Code, FileText, 
@@ -70,6 +70,34 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<"upload" | "manual" | "results">("upload");
   const [manualSubTab, setManualSubTab] = useState<"nodes" | "members">("nodes");
   const [mounted, setMounted] = useState(false);
+  const [results, setResults] = useState<any>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files?.[0]) return;
+    setIsAnalyzing(true);
+    const formData = new FormData();
+    formData.append("file", e.target.files[0]);
+
+    try {
+      const res = await fetch("http://localhost:8000/api/analyze/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (data.status === "success") {
+        setResults(data.results);
+        setActiveTab("results");
+      } else {
+        alert(data.error || "Analysis failed");
+      }
+    } catch (err) {
+      alert("Error connecting to Engine API");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
 
   // 3D Parallax Tilt Effect for the main container
   const cardX = useMotionValue(0);
@@ -189,10 +217,11 @@ export default function Home() {
                     <FileText size={20} className="text-purple-300" />
                     Browse .TXT
                   </button>
-                  <button className="flex items-center justify-center gap-3 px-8 py-4 rounded-2xl bg-gradient-to-r from-purple-600/30 to-fuchsia-600/30 text-purple-100 border border-purple-400/40 font-bold hover:from-purple-500/40 hover:to-fuchsia-500/40 hover:shadow-[0_0_30px_rgba(192,132,252,0.5)] transition-all">
+                  <button onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center gap-3 px-8 py-4 rounded-2xl bg-gradient-to-r from-purple-600/30 to-fuchsia-600/30 text-purple-100 border border-purple-400/40 font-bold hover:from-purple-500/40 hover:to-fuchsia-500/40 hover:shadow-[0_0_30px_rgba(192,132,252,0.5)] transition-all">
                     <Database size={20} className="text-fuchsia-300" />
-                    Browse .XLSX
+                    {isAnalyzing ? "Analyzing..." : "Browse .XLSX"}
                   </button>
+                  <input type="file" accept=".xlsx" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
                 </div>
               </div>
             )}
@@ -317,13 +346,20 @@ export default function Home() {
                        <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,1)]"></span>
                        Node Displacements
                     </h4>
-                    <div className="space-y-3 relative z-10">
-                      {[1, 2, 3].map(i => (
-                        <div key={i} className="flex justify-between items-center text-sm py-2.5 border-b border-white/[0.05]">
-                          <span className="text-zinc-300 font-bold">Node {i}</span>
-                          <span className="text-cyan-100 font-mono bg-cyan-900/30 px-2 py-1 rounded shadow-inner border border-cyan-500/20">0.00{i}2 m</span>
-                        </div>
-                      ))}
+                    <div className="space-y-3 relative z-10 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
+                      {results?.displacements ? Object.keys(results.displacements).map(nodeId => {
+                        const d = results.displacements[nodeId];
+                        return (
+                          <div key={nodeId} className="flex justify-between items-start text-xs py-2 border-b border-white/[0.05]">
+                            <span className="text-zinc-300 font-bold">Node {nodeId}</span>
+                            <div className="flex flex-col items-end gap-1">
+                              <span className="text-cyan-100 font-mono bg-cyan-900/40 px-1.5 rounded">dx: {d.dx.toExponential(4)}</span>
+                              <span className="text-cyan-100 font-mono bg-cyan-900/40 px-1.5 rounded">dy: {d.dy.toExponential(4)}</span>
+                              <span className="text-cyan-100 font-mono bg-cyan-900/40 px-1.5 rounded">θz: {d.theta.toExponential(4)}</span>
+                            </div>
+                          </div>
+                        )
+                      }) : <div className="text-zinc-500 text-sm">No data / Wait</div>}
                     </div>
                   </div>
 
@@ -334,15 +370,20 @@ export default function Home() {
                       <span className="w-2 h-2 rounded-full bg-purple-400 shadow-[0_0_8px_rgba(192,132,252,1)]"></span>
                       Support Reactions
                     </h4>
-                    <div className="space-y-3 relative z-10">
-                      <div className="flex justify-between items-center text-sm py-2.5 border-b border-white/[0.05]">
-                        <span className="text-zinc-300 font-bold">Node 1 (Rx)</span>
-                        <span className="text-emerald-300 font-mono bg-emerald-900/40 px-2 py-1 rounded border border-emerald-400/30 shadow-[0_0_10px_rgba(52,211,153,0.2)]">+12.5 kN</span>
-                      </div>
-                      <div className="flex justify-between items-center text-sm py-2.5 border-b border-white/[0.05]">
-                        <span className="text-zinc-300 font-bold">Node 1 (Ry)</span>
-                        <span className="text-rose-300 font-mono bg-rose-900/40 px-2 py-1 rounded border border-rose-400/30 shadow-[0_0_10px_rgba(251,113,133,0.2)]">-5.0 kN</span>
-                      </div>
+                    <div className="space-y-3 relative z-10 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
+                      {results?.reactions ? Object.keys(results.reactions).map(nodeId => {
+                        const r = results.reactions[nodeId];
+                        return (
+                          <div key={nodeId} className="flex justify-between items-start text-xs py-2 border-b border-white/[0.05]">
+                            <span className="text-zinc-300 font-bold">Node {nodeId}</span>
+                            <div className="flex flex-col items-end gap-1">
+                              <span className="text-emerald-300 font-mono bg-emerald-900/40 px-1.5 rounded">Rx: {r.Fx.toFixed(2)}</span>
+                              <span className="text-rose-300 font-mono bg-rose-900/40 px-1.5 rounded">Ry: {r.Fy.toFixed(2)}</span>
+                              <span className="text-purple-300 font-mono bg-purple-900/40 px-1.5 rounded">Mz: {r.Mz.toFixed(2)}</span>
+                            </div>
+                          </div>
+                        )
+                      }) : <div className="text-zinc-500 text-sm">No data / Wait</div>}
                     </div>
                   </div>
 
@@ -353,19 +394,27 @@ export default function Home() {
                       <span className="w-2 h-2 rounded-full bg-fuchsia-400 shadow-[0_0_8px_rgba(232,121,249,1)]"></span>
                       Member End Forces
                     </h4>
-                    <div className="space-y-3 relative z-10">
-                      <div className="flex justify-between items-center text-sm py-2.5 border-b border-white/[0.05]">
-                        <span className="text-zinc-300 font-bold">Member 1</span>
-                        <span className="text-white font-mono flex items-center gap-2">
-                          <span className="px-2 py-1 rounded bg-black/60 border border-white/10 text-xs text-zinc-200 font-medium shadow-inner">Axial: 10</span>
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center text-sm py-2.5 border-b border-white/[0.05]">
-                        <span className="text-zinc-300 font-bold">Member 2</span>
-                        <span className="text-white font-mono flex items-center gap-2">
-                          <span className="px-2 py-1 rounded bg-black/60 border border-white/10 text-xs text-zinc-200 font-medium shadow-inner">Shear: 4.2</span>
-                        </span>
-                      </div>
+                    <div className="space-y-3 relative z-10 max-h-64 overflow-y-auto pr-2 custom-scrollbar focus:outline-none">
+                      {results?.member_forces ? Object.keys(results.member_forces).map(mId => {
+                        const f = results.member_forces[mId];
+                        return (
+                          <div key={mId} className="flex flex-col gap-2 text-[10px] py-3 border-b border-white/[0.05]">
+                            <span className="text-zinc-300 font-bold text-xs border-b border-white/10 pb-1 w-full">Mem {mId}</span>
+                            <div className="grid grid-cols-2 gap-2 w-full">
+                              <div className="flex flex-col gap-1 items-start bg-black/40 p-1.5 rounded">
+                                <span className="text-white font-mono">N1: {f.Axial_1.toFixed(2)}</span>
+                                <span className="text-white font-mono">V1: {f.Shear_1.toFixed(2)}</span>
+                                <span className="text-yellow-100 font-mono">M1: {f.Moment_1.toFixed(2)}</span>
+                              </div>
+                              <div className="flex flex-col gap-1 items-end bg-black/40 p-1.5 rounded text-right">
+                                <span className="text-white font-mono">N2: {f.Axial_2.toFixed(2)}</span>
+                                <span className="text-white font-mono">V2: {f.Shear_2.toFixed(2)}</span>
+                                <span className="text-yellow-100 font-mono">M2: {f.Moment_2.toFixed(2)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      }) : <div className="text-zinc-500 text-sm">No data / Wait</div>}
                     </div>
                   </div>
                 </div>

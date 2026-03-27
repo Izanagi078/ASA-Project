@@ -1,0 +1,26 @@
+globalThis.__BUILD_MANIFEST = {
+  "pages": {
+    "/_app": []
+  },
+  "devFiles": [],
+  "polyfillFiles": [
+    "static/chunks/0uz8_next_dist_build_polyfills_polyfill-nomodule.js"
+  ],
+  "lowPriorityFiles": [
+    "static/development/_buildManifest.js",
+    "static/development/_ssgManifest.js",
+    "static/development/_clientMiddlewareManifest.js"
+  ],
+  "rootMainFiles": [
+    "static/chunks/[turbopack]_browser_dev_hmr-client_hmr-client_ts_0c4olkr._.js",
+    "static/chunks/0uz8_next_dist_compiled_next-devtools_index_0d~w.e4.js",
+    "static/chunks/0uz8_next_dist_compiled_react-dom_054qe92._.js",
+    "static/chunks/0uz8_next_dist_compiled_react-server-dom-turbopack_0iy~pn9._.js",
+    "static/chunks/0uz8_next_dist_compiled_09yd~w4._.js",
+    "static/chunks/0uz8_next_dist_client_0ktz_wh._.js",
+    "static/chunks/0uz8_next_dist_0e2tnpq._.js",
+    "static/chunks/0uz8_@swc_helpers_cjs_0zbmsn.._.js",
+    "static/chunks/OneDrive_Desktop_ASA Lab Project_frontend_0rqeker._.js",
+    "static/chunks/turbopack-OneDrive_Desktop_ASA Lab Project_frontend_0cnpkb7._.js"
+  ]
+};
