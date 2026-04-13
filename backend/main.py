@@ -47,8 +47,9 @@ def parse_dataframes(df_nodes, df_members) -> tuple[List[NodeData], List[MemberD
     nodes = []
     # Using iterrows ensures every single row of the Excel is parsed
     for _, row in df_nodes.iterrows():
+        n_id = int(row.get('Sr_No.', row.get('Sl_No', 0)))
         nodes.append(NodeData(
-            id=int(row['Sr_No.']),
+            id=n_id,
             x=float(row['x']),
             y=float(row['y']),
             u=int(row['u']),
@@ -61,15 +62,27 @@ def parse_dataframes(df_nodes, df_members) -> tuple[List[NodeData], List[MemberD
         
     members = []
     for _, row in df_members.iterrows():
+        m_id = int(row.get('Sr_No.', row.get('Sl_No', 0)))
+        w1 = 0.0
+        w2 = 0.0
+        if 'Triangular_load' in df_members.columns:
+            # find index
+            t_idx = df_members.columns.get_loc('Triangular_load')
+            w1 = float(row.iloc[t_idx]) if pd.notna(row.iloc[t_idx]) else 0.0
+            if t_idx + 1 < len(df_members.columns):
+                w2 = float(row.iloc[t_idx + 1]) if pd.notna(row.iloc[t_idx + 1]) else 0.0
+        
         members.append(MemberData(
-            id=int(row['Sr_No.']),
+            id=m_id,
             node_i=int(row['Node_1']),
             node_j=int(row['Node_2']),
             area=float(row['Area']),
             moi=float(row['MoI']),
             e=float(row['E']),
             udl=float(row['UDL']) if pd.notna(row['UDL']) else 0.0,
-            point_load=float(row['Point_load']) if pd.notna(row['Point_load']) else 0.0
+            point_load=float(row['Point_load']) if pd.notna(row['Point_load']) else 0.0,
+            w1=w1,
+            w2=w2
         ))
         
     return nodes, members
@@ -77,4 +90,6 @@ def parse_dataframes(df_nodes, df_members) -> tuple[List[NodeData], List[MemberD
 def process_analysis(nodes: List[NodeData], members: List[MemberData]):
     # directly call the solver applying user logic
     results = solve_frame(nodes, members)
+    results['nodes'] = [n.dict() for n in nodes]
+    results['members'] = [m.dict() for m in members]
     return {"status": "success", "results": results}

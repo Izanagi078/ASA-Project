@@ -43,6 +43,7 @@ def solve_frame(nodes: List[NodeData], members: List[MemberData]) -> Dict[str, A
         L = math.sqrt((node_coords[row.node_j][0] - node_coords[row.node_i][0])**2 + 
                       (node_coords[row.node_j][1] - node_coords[row.node_i][1])**2)
         UDL, P = row.udl, row.point_load
+        w1, w2 = row.w1, row.w2
         
         x1, y1 = node_coords[row.node_i]
         x2, y2 = node_coords[row.node_j]
@@ -75,6 +76,11 @@ def solve_frame(nodes: List[NodeData], members: List[MemberData]) -> Dict[str, A
             f_l[1] += UDL*L/2; f_l[2] += UDL*L**2/12; f_l[4] += UDL*L/2; f_l[5] += -UDL*L**2/12
         if P != 0:
             f_l[1] += P/2; f_l[2] += P*L/8; f_l[4] += P/2; f_l[5] += -P*L/8
+        if w1 != 0 or w2 != 0:
+            f_l[1] -= (w1 * 7 * L) / 20 + (w2 * 3 * L) / 20
+            f_l[2] -= (w1 * L**2) / 20 + (w2 * L**2) / 30
+            f_l[4] -= (w1 * 3 * L) / 20 + (w2 * 7 * L) / 20
+            f_l[5] += (w1 * L**2) / 30 + (w2 * L**2) / 20
             
         f_g_e = T.T @ f_l
         for r in range(6):

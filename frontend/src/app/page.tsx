@@ -6,6 +6,7 @@ import {
   Activity, Upload, Database, Code, FileText, 
   Plus, Settings, GitCommit, Layers, ChevronRight, BarChart 
 } from "lucide-react";
+import StructureVisualizer from "../components/StructureVisualizer";
 
 // Magical Glitter Trail Component
 const GlitterTrail = () => {
@@ -17,7 +18,6 @@ const GlitterTrail = () => {
     
     // Throttle particle creation slightly to avoid hundreds of DOM nodes spanning instantly
     let lastTime = 0;
-
     const handleMouseMove = (e: MouseEvent) => {
       const now = Date.now();
       if (now - lastTime < 15) return; // spawn roughly every 15ms at most
@@ -73,7 +73,14 @@ export default function Home() {
   const [results, setResults] = useState<any>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
+  const handleExportPDF = () => {
+    if (!results) {
+      alert("No data to export. Please run analysis first.");
+      return;
+    }
+    // Simple native print call
+    window.print();
+  };
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files?.[0]) return;
     setIsAnalyzing(true);
@@ -154,12 +161,6 @@ export default function Home() {
             </button>
           ))}
         </nav>
-        <div>
-          <button className="px-5 py-2.5 rounded-full font-bold text-sm bg-purple-500/10 hover:bg-purple-500/30 border border-purple-500/50 text-purple-200 transition-all flex items-center gap-2 shadow-[0_0_20px_rgba(168,85,247,0.2)] hover:shadow-[0_0_30px_rgba(168,85,247,0.6)]">
-            <Code size={16} />
-            <span className="hidden sm:inline">Connect Backend</span>
-          </button>
-        </div>
       </header>
 
       {/* Main Content Area */}
@@ -323,118 +324,102 @@ export default function Home() {
             )}
 
             {/* TAB: RESULTS */}
-            {activeTab === "results" && (
-              <div className="relative z-10" style={{ transform: "translateZ(30px)" }}>
-                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 border-b border-white/10 pb-6 gap-4">
-                  <div>
-                    <h3 className="text-2xl font-bold text-white mb-1 flex items-center gap-3 tracking-tight">
-                      <BarChart size={32} className="text-cyan-400 p-1.5 bg-cyan-500/20 rounded border border-cyan-500/40 shadow-[0_0_15px_rgba(34,211,238,0.4)]"/> 
-                      Analysis Results
-                    </h3>
-                    <p className="text-sm text-zinc-300 font-medium">Post-processing output from the direct stiffness method engine.</p>
-                  </div>
-                  <button className="px-6 py-3 rounded-xl bg-white/10 border border-white/20 text-white text-sm font-bold hover:bg-white/20 transition-all flex items-center gap-2 shadow-lg backdrop-blur-md">
-                    <Settings size={18} /> Export Results
-                  </button>
+{activeTab === "results" && (
+  <div id="section-to-print" className="relative z-10 w-full" style={{ transform: "translateZ(30px)" }}>
+    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 border-b border-white/10 pb-6 gap-4">
+      <div>
+        <h3 className="text-2xl font-bold text-white mb-1 flex items-center gap-3 tracking-tight">
+          <BarChart size={32} className="text-cyan-400 p-1.5 bg-cyan-500/20 rounded border border-cyan-500/40 shadow-[0_0_15px_rgba(34,211,238,0.4)]"/> 
+          Structural Analysis Report
+        </h3>
+        <p className="text-sm text-zinc-300 font-medium">Numerical output for Plane Frame (Direct Stiffness Method)</p>
+      </div>
+      
+      {/* EXPORT BUTTON - Hidden during print */}
+      <button 
+        onClick={handleExportPDF}
+        className="no-print px-6 py-3 rounded-xl bg-cyan-500/20 border border-cyan-500/50 text-cyan-100 text-sm font-bold hover:bg-cyan-500/40 transition-all flex items-center gap-2 shadow-lg backdrop-blur-md"
+      >
+        <FileText size={18} /> Export Numerical Report (PDF)
+      </button>
+    </div>
+
+    {/* DATA GRID */}
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      {/* Node Displacements Card */}
+      <div className="bg-black/50 p-6 rounded-2xl border border-white/10 shadow-xl backdrop-blur-xl">
+        <h4 className="text-cyan-300 font-black mb-5 uppercase tracking-widest text-[11px] flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-cyan-400"></span> Nodal Displacements
+        </h4>
+        <div className="space-y-3 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
+          {results?.displacements ? Object.keys(results.displacements).map(nodeId => (
+            <div key={nodeId} className="flex justify-between items-start text-xs py-2 border-b border-white/[0.05]">
+              <span className="text-zinc-300 font-bold">Node {nodeId}</span>
+              <div className="flex flex-col items-end gap-1 font-mono text-cyan-100">
+                <span>dx: {results.displacements[nodeId].dx.toExponential(3)}</span>
+                <span>dy: {results.displacements[nodeId].dy.toExponential(3)}</span>
+                <span>θz: {results.displacements[nodeId].theta.toExponential(3)}</span>
+              </div>
+            </div>
+          )) : <div className="text-zinc-500 italic">No results found</div>}
+        </div>
+      </div>
+
+      {/* Support Reactions Card */}
+      <div className="bg-black/50 p-6 rounded-2xl border border-white/10 shadow-xl backdrop-blur-xl">
+        <h4 className="text-purple-300 font-black mb-5 uppercase tracking-widest text-[11px] flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-purple-400"></span> Reactions
+        </h4>
+        <div className="space-y-3 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
+          {results?.reactions ? Object.keys(results.reactions).map(nodeId => (
+            <div key={nodeId} className="flex justify-between items-start text-xs py-2 border-b border-white/[0.05]">
+              <span className="text-zinc-300 font-bold">Node {nodeId}</span>
+              <div className="flex flex-col items-end gap-1 font-mono">
+                <span className="text-emerald-400">Rx: {results.reactions[nodeId].Fx.toFixed(2)} kN</span>
+                <span className="text-rose-400">Ry: {results.reactions[nodeId].Fy.toFixed(2)} kN</span>
+                <span className="text-purple-300">Mz: {results.reactions[nodeId].Mz.toFixed(2)} kNm</span>
+              </div>
+            </div>
+          )) : <div className="text-zinc-500 italic">No results found</div>}
+        </div>
+      </div>
+
+      {/* Member Forces Card */}
+      <div className="bg-black/50 p-6 rounded-2xl border border-white/10 shadow-xl backdrop-blur-xl">
+        <h4 className="text-fuchsia-300 font-black mb-5 uppercase tracking-widest text-[11px] flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-fuchsia-400"></span> Member End Forces
+        </h4>
+        <div className="space-y-3 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
+          {results?.member_forces ? Object.keys(results.member_forces).map(mId => (
+            <div key={mId} className="flex flex-col gap-2 text-[10px] py-3 border-b border-white/[0.05]">
+              <span className="text-zinc-300 font-bold text-xs">Member {mId}</span>
+              <div className="grid grid-cols-2 gap-2 text-white/80 font-mono">
+                <div className="bg-white/5 p-1 rounded">
+                  <p>N1: {results.member_forces[mId].Axial_1.toFixed(1)}</p>
+                  <p>V1: {results.member_forces[mId].Shear_1.toFixed(1)}</p>
+                  <p className="text-yellow-200">M1: {results.member_forces[mId].Moment_1.toFixed(1)}</p>
                 </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  {/* Mocked Displacements */}
-                  <div className="bg-black/50 p-6 rounded-2xl border border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.5)] backdrop-blur-xl relative overflow-hidden hover:border-cyan-500/40 transition-all duration-300">
-                    <div className="absolute top-0 right-0 p-4 opacity-5"><Activity size={100}/></div>
-                    <h4 className="text-cyan-300 font-black mb-5 uppercase tracking-widest text-[11px] flex items-center gap-2 drop-shadow-md">
-                       <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,1)]"></span>
-                       Node Displacements
-                    </h4>
-                    <div className="space-y-3 relative z-10 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
-                      {results?.displacements ? Object.keys(results.displacements).map(nodeId => {
-                        const d = results.displacements[nodeId];
-                        return (
-                          <div key={nodeId} className="flex justify-between items-start text-xs py-2 border-b border-white/[0.05]">
-                            <span className="text-zinc-300 font-bold">Node {nodeId}</span>
-                            <div className="flex flex-col items-end gap-1">
-                              <span className="text-cyan-100 font-mono bg-cyan-900/40 px-1.5 rounded">dx: {d.dx.toExponential(4)}</span>
-                              <span className="text-cyan-100 font-mono bg-cyan-900/40 px-1.5 rounded">dy: {d.dy.toExponential(4)}</span>
-                              <span className="text-cyan-100 font-mono bg-cyan-900/40 px-1.5 rounded">θz: {d.theta.toExponential(4)}</span>
-                            </div>
-                          </div>
-                        )
-                      }) : <div className="text-zinc-500 text-sm">No data / Wait</div>}
-                    </div>
-                  </div>
-
-                  {/* Mocked Reactions */}
-                  <div className="bg-black/50 p-6 rounded-2xl border border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.5)] backdrop-blur-xl relative overflow-hidden hover:border-purple-500/40 transition-all duration-300">
-                    <div className="absolute top-0 right-0 p-4 opacity-5"><GitCommit size={100}/></div>
-                    <h4 className="text-purple-300 font-black mb-5 uppercase tracking-widest text-[11px] flex items-center gap-2 drop-shadow-md">
-                      <span className="w-2 h-2 rounded-full bg-purple-400 shadow-[0_0_8px_rgba(192,132,252,1)]"></span>
-                      Support Reactions
-                    </h4>
-                    <div className="space-y-3 relative z-10 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
-                      {results?.reactions ? Object.keys(results.reactions).map(nodeId => {
-                        const r = results.reactions[nodeId];
-                        return (
-                          <div key={nodeId} className="flex justify-between items-start text-xs py-2 border-b border-white/[0.05]">
-                            <span className="text-zinc-300 font-bold">Node {nodeId}</span>
-                            <div className="flex flex-col items-end gap-1">
-                              <span className="text-emerald-300 font-mono bg-emerald-900/40 px-1.5 rounded">Rx: {r.Fx.toFixed(2)}</span>
-                              <span className="text-rose-300 font-mono bg-rose-900/40 px-1.5 rounded">Ry: {r.Fy.toFixed(2)}</span>
-                              <span className="text-purple-300 font-mono bg-purple-900/40 px-1.5 rounded">Mz: {r.Mz.toFixed(2)}</span>
-                            </div>
-                          </div>
-                        )
-                      }) : <div className="text-zinc-500 text-sm">No data / Wait</div>}
-                    </div>
-                  </div>
-
-                  {/* Mocked Member Forces */}
-                  <div className="bg-black/50 p-6 rounded-2xl border border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.5)] backdrop-blur-xl relative overflow-hidden hover:border-fuchsia-500/40 transition-all duration-300">
-                    <div className="absolute top-0 right-0 p-4 opacity-5"><Layers size={100}/></div>
-                    <h4 className="text-fuchsia-300 font-black mb-5 uppercase tracking-widest text-[11px] flex items-center gap-2 drop-shadow-md">
-                      <span className="w-2 h-2 rounded-full bg-fuchsia-400 shadow-[0_0_8px_rgba(232,121,249,1)]"></span>
-                      Member End Forces
-                    </h4>
-                    <div className="space-y-3 relative z-10 max-h-64 overflow-y-auto pr-2 custom-scrollbar focus:outline-none">
-                      {results?.member_forces ? Object.keys(results.member_forces).map(mId => {
-                        const f = results.member_forces[mId];
-                        return (
-                          <div key={mId} className="flex flex-col gap-2 text-[10px] py-3 border-b border-white/[0.05]">
-                            <span className="text-zinc-300 font-bold text-xs border-b border-white/10 pb-1 w-full">Mem {mId}</span>
-                            <div className="grid grid-cols-2 gap-2 w-full">
-                              <div className="flex flex-col gap-1 items-start bg-black/40 p-1.5 rounded">
-                                <span className="text-white font-mono">N1: {f.Axial_1.toFixed(2)}</span>
-                                <span className="text-white font-mono">V1: {f.Shear_1.toFixed(2)}</span>
-                                <span className="text-yellow-100 font-mono">M1: {f.Moment_1.toFixed(2)}</span>
-                              </div>
-                              <div className="flex flex-col gap-1 items-end bg-black/40 p-1.5 rounded text-right">
-                                <span className="text-white font-mono">N2: {f.Axial_2.toFixed(2)}</span>
-                                <span className="text-white font-mono">V2: {f.Shear_2.toFixed(2)}</span>
-                                <span className="text-yellow-100 font-mono">M2: {f.Moment_2.toFixed(2)}</span>
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      }) : <div className="text-zinc-500 text-sm">No data / Wait</div>}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-8 w-full h-64 rounded-3xl border border-white/20 bg-black/60 flex items-center justify-center text-zinc-600 relative overflow-hidden shadow-[inset_0_5px_30px_rgba(0,0,0,0.8)]">
-                  <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
-                  {/* Intense glowing lines for the visualizer mockup */}
-                  <div className="absolute left-1/4 bottom-1/4 w-40 h-1 bg-cyan-400/80 rotate-45 blur-[3px] shadow-[0_0_20px_rgba(34,211,238,1)]"></div>
-                  <div className="absolute right-1/4 top-1/4 w-48 h-1 bg-purple-500/80 -rotate-12 blur-[4px] shadow-[0_0_20px_rgba(168,85,247,1)]"></div>
-                  <div className="absolute left-1/2 top-1/2 w-6 h-6 bg-fuchsia-400 rounded-full mix-blend-screen blur-[8px] animate-pulse"></div>
-                  
-                  <div className="relative z-10 flex flex-col items-center gap-3 bg-black/60 py-3 px-8 rounded-full border border-white/10 backdrop-blur-md shadow-2xl">
-                    <p className="font-black flex items-center gap-2 text-white text-sm tracking-widest uppercase drop-shadow-[0_0_10px_rgba(255,255,255,0.5)]">
-                      <Activity size={18} className="text-purple-400 animate-pulse"/> 
-                      3D Frame Visualizer Ready
-                    </p>
-                  </div>
+                <div className="bg-white/5 p-1 rounded text-right">
+                  <p>N2: {results.member_forces[mId].Axial_2.toFixed(1)}</p>
+                  <p>V2: {results.member_forces[mId].Shear_2.toFixed(1)}</p>
+                  <p className="text-yellow-200">M2: {results.member_forces[mId].Moment_2.toFixed(1)}</p>
                 </div>
               </div>
-            )}
+            </div>
+          )) : <div className="text-zinc-500 italic">No results found</div>}
+        </div>
+      </div>
+    </div>
+
+    {/* VISUALIZER - Page break avoid for PDF */}
+    <div className="mt-8 w-full border border-white/10 rounded-[2rem] overflow-hidden bg-black/40 visualizer-container">
+      <div className="p-4 border-b border-white/10 bg-white/5 no-print">
+        <p className="text-[10px] uppercase tracking-widest font-black text-zinc-400">Structural Geometry Visualization</p>
+      </div>
+      <StructureVisualizer nodes={results?.nodes || []} members={results?.members || []} />
+    </div>
+  </div>
+)}
           </motion.div>
         </AnimatePresence>
       </main>

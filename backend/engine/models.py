@@ -23,6 +23,8 @@ class MemberData(BaseModel):
     e: float
     udl: float = 0.0
     point_load: float = 0.0
+    w1: float = 0.0
+    w2: float = 0.0
 
 class Node:
     def __init__(self, id: int, x: float, y: float, bcs: List[int], loads: List[float]):
@@ -108,6 +110,12 @@ class Member:
             fef[1] -= P / 2
             fef[2] -= (P * L) / 8
             fef[4] -= P / 2
-            fef[5] += (P * L) / 8
+        if hasattr(self, 'w1') and (self.w1 != 0 or self.w2 != 0):
+            w1 = self.w1
+            w2 = self.w2
+            fef[1] -= (w1 * 7 * L) / 20 + (w2 * 3 * L) / 20
+            fef[2] -= (w1 * L**2) / 20 + (w2 * L**2) / 30
+            fef[4] -= (w1 * 3 * L) / 20 + (w2 * 7 * L) / 20
+            fef[5] += (w1 * L**2) / 30 + (w2 * L**2) / 20
             
         return fef
