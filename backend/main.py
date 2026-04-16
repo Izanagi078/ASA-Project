@@ -1,95 +1,113 @@
-from fastapi import FastAPI, UploadFile, File
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
 import pandas as pd
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from engine.models import NodeData, MemberData
+from engine.solver import solve_frame
 import io
 
-from engine.solver import solve_frame
-from engine.models import Node, Member, NodeData, MemberData
-
-app = FastAPI(title="Structural Analysis API", version="1.0.0")
+app = FastAPI(title="Structural Engine API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-class AnalysisRequest(BaseModel):
-    nodes: List[NodeData]
-    members: List[MemberData]
+def parse_and_solve(nodes_df, members_df):
+    def get_id(row):
+        for key in row.keys():
+            k = str(key).lower().replace(' ', '').replace('_', '').replace('.', '')
+            if k in ['slno', 'srno', 'id', 'no']:
+                return int(row[key])
+        return int(row.iloc[0])
 
-@app.get("/api/status")
-def status():
-    return {"status": "Analysis Engine Online"}
+    nodes_df = nodes_df.fillna(0)
+    members_df = members_df.fillna(0)
+    
+    nodes_list = []
+    for _, row in nodes_df.iterrows():
+        n = NodeData(
+            id=get_id(row), x=float(row.get('x', 0)), y=float(row.get('y', 0)),
+            u=int(row['u']), v=int(row['v']), theta=int(row['theta']),
+            H=float(row.get('H', 0.0)), V=float(row.get('V', 0.0)), M=float(row.get('M', 0.0)),
+            settle_u=float(row.get('settle_u', 0.0)),
+            settle_v=float(row.get('settle_v', 0.0)),
+            settle_theta=float(row.get('settle_theta', 0.0))
+        )
+        nodes_list.append(n)
 
-@app.post("/api/analyze/manual")
-def analyze_manual(payload: AnalysisRequest):
-    return process_analysis(payload.nodes, payload.members)
+    members_list = []
+    for _, row in members_df.iterrows():
+        # Fallback names based on previous logic and typical CSVs
+        w1_val = float(row.get('Triangular_load', 0.0))
+        w2_val = float(row.get('Unnamed: 9', 0.0))
+        
+        m = MemberData(
+            id=get_id(row),
+            node_i=int(row.get('Node_1', 0)), node_j=int(row.get('Node_2', 0)),
+            area=float(row['Area']), moi=float(row['MoI']), e=float(row['E']),
+            udl=float(row.get('UDL', 0.0)),
+            point_load=float(row.get('Point_load', 0.0)),
+            point_load_a=float(row.get('point_load_a', 0.0)),
+            w1=w1_val,
+            w2=w2_val
+        )
+        members_list.append(m)
+
+    results = solve_frame(nodes_list, members_list)
+    results['nodes'] = [{"id": n.id, "x": n.x, "y": n.y, "u": n.u, "v": n.v, "theta": n.theta, "H": n.H, "V": n.V, "M": n.M} for n in nodes_list]
+    results['members'] = [{"id": m.id, "node_i": m.node_i, "node_j": m.node_j, "udl": m.udl, "point_load": m.point_load, "w1": m.w1, "w2": m.w2} for m in members_list]
+    
+    return results
 
 @app.post("/api/analyze/upload")
 async def analyze_upload(file: UploadFile = File(...)):
-    content = await file.read()
-    
-    if file.filename.endswith('.xlsx'):
-        df_nodes = pd.read_excel(io.BytesIO(content), sheet_name='Node')
-        df_members = pd.read_excel(io.BytesIO(content), sheet_name='Member')
+    try:
+        content = await file.read()
         
-        nodes, members = parse_dataframes(df_nodes, df_members)
-        return process_analysis(nodes, members)
-    
-    return {"error": "Unsupported file format. Please upload .xlsx"}
+        if file.filename.endswith('.xlsx'):
+            xl = pd.ExcelFile(io.BytesIO(content))
+            sheet_names = xl.sheet_names
+            
+            node_sheet = next((s for s in sheet_names if 'node' in s.lower()), sheet_names[0])
+            member_sheet = next((s for s in sheet_names if 'member' in s.lower()), sheet_names[1])
+            
+            nodes_df = pd.read_excel(xl, sheet_name=node_sheet)
+            members_df = pd.read_excel(xl, sheet_name=member_sheet)
+        else:
+            raise HTTPException(status_code=400, detail="Currently, only .xlsx uploads are fully supported through this endpoint.")
 
-def parse_dataframes(df_nodes, df_members) -> tuple[List[NodeData], List[MemberData]]:
-    nodes = []
-    # Using iterrows ensures every single row of the Excel is parsed
-    for _, row in df_nodes.iterrows():
-        n_id = int(row.get('Sr_No.', row.get('Sl_No', 0)))
-        nodes.append(NodeData(
-            id=n_id,
-            x=float(row['x']),
-            y=float(row['y']),
-            u=int(row['u']),
-            v=int(row['v']),
-            theta=int(row['theta']),
-            H=float(row['H']) if pd.notna(row['H']) else 0.0,
-            V=float(row['V']) if pd.notna(row['V']) else 0.0,
-            M=float(row['M']) if pd.notna(row['M']) else 0.0
-        ))
-        
-    members = []
-    for _, row in df_members.iterrows():
-        m_id = int(row.get('Sr_No.', row.get('Sl_No', 0)))
-        w1 = 0.0
-        w2 = 0.0
-        if 'Triangular_load' in df_members.columns:
-            # find index
-            t_idx = df_members.columns.get_loc('Triangular_load')
-            w1 = float(row.iloc[t_idx]) if pd.notna(row.iloc[t_idx]) else 0.0
-            if t_idx + 1 < len(df_members.columns):
-                w2 = float(row.iloc[t_idx + 1]) if pd.notna(row.iloc[t_idx + 1]) else 0.0
-        
-        members.append(MemberData(
-            id=m_id,
-            node_i=int(row['Node_1']),
-            node_j=int(row['Node_2']),
-            area=float(row['Area']),
-            moi=float(row['MoI']),
-            e=float(row['E']),
-            udl=float(row['UDL']) if pd.notna(row['UDL']) else 0.0,
-            point_load=float(row['Point_load']) if pd.notna(row['Point_load']) else 0.0,
-            w1=w1,
-            w2=w2
-        ))
-        
-    return nodes, members
+        results = parse_and_solve(nodes_df, members_df)
+        return {"status": "success", "results": results}
 
-def process_analysis(nodes: List[NodeData], members: List[MemberData]):
-    # directly call the solver applying user logic
-    results = solve_frame(nodes, members)
-    results['nodes'] = [n.dict() for n in nodes]
-    results['members'] = [m.dict() for m in members]
-    return {"status": "success", "results": results}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "error": str(e)}
+
+def test_local_script():
+    # Retained the old script logic for your local testing purposes
+    node_file = "Sample_Input sheet.xlsx - Node.csv"
+    member_file = "Sample_Input sheet.xlsx - Member.csv"
+    print("Running local fallback test on CSV files...")
+    
+    nodes_df = pd.read_csv(node_file)
+    members_df = pd.read_csv(member_file)
+    results = parse_and_solve(nodes_df, members_df)
+    
+    # 3. Print the Output
+    print("="*50)
+    print("1. DISPLACEMENTS AT NODES")
+    print("="*50)
+    for node_id, disps in results['displacements'].items():
+        print(f"Node {node_id}: dx = {disps['dx']:.6e} m, dy = {disps['dy']:.6e} m, theta = {disps['theta']:.6e} rad")
+    
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "test":
+        test_local_script()
+    else:
+        import uvicorn
+        uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

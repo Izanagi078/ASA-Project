@@ -12,13 +12,19 @@ var __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__
 ;
 ;
 function StructureVisualizer({ nodes, members }) {
-    // Compute bounds
-    const { minX, maxX, minY, maxY } = (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["useMemo"])(()=>{
+    // 1. Calculate bounding box and scale
+    const bounds = (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["useMemo"])(()=>{
         if (!nodes || nodes.length === 0) return {
             minX: 0,
             maxX: 10,
             minY: 0,
-            maxY: 10
+            maxY: 10,
+            scale: 1,
+            padX: 0,
+            padY: 0,
+            VIEWPORT_SIZE: 1000,
+            cx: 5,
+            cy: 5
         };
         let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
         nodes.forEach((n)=>{
@@ -27,88 +33,142 @@ function StructureVisualizer({ nodes, members }) {
             minY = Math.min(minY, n.y);
             maxY = Math.max(maxY, n.y);
         });
-        // Add massive physical padding to prevent newly enlarged arrows/text from clipping
-        const maxDim = Math.max(maxX - minX, maxY - minY);
-        const pad = maxDim * 0.5 || 5;
+        const dx = maxX - minX || 1;
+        const dy = maxY - minY || 1;
+        const VIEWPORT_SIZE = 1200;
+        // 2.5x padding guarantees arrows and text drawn far outside never get cropped
+        const paddingMultiplier = 2.5;
+        const maxDim = Math.max(dx, dy) * paddingMultiplier;
+        const scale = VIEWPORT_SIZE / maxDim;
+        const actualWidthInPixels = dx * scale;
+        const actualHeightInPixels = dy * scale;
+        const padX = (VIEWPORT_SIZE - actualWidthInPixels) / 2;
+        const padY = (VIEWPORT_SIZE - actualHeightInPixels) / 2;
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
         return {
-            minX: minX - pad,
-            maxX: maxX + pad,
-            minY: minY - pad,
-            maxY: maxY + pad
+            minX,
+            maxX,
+            minY,
+            maxY,
+            scale,
+            padX,
+            padY,
+            VIEWPORT_SIZE,
+            cx,
+            cy
         };
     }, [
         nodes
     ]);
-    const widthX = maxX - minX;
-    const heightY = maxY - minY;
-    // ViewBox coords mapping tools: Make sure horizontal and vertical scaling are identical
-    const V_WIDTH = 1200;
-    const V_HEIGHT = 1200 * (heightY / widthX);
-    const mapX = (x)=>(x - minX) / widthX * V_WIDTH;
-    const mapY = (y)=>V_HEIGHT - (y - minY) / heightY * V_HEIGHT;
+    // Math to SVG Coordinate mapping (SVG Y-axis is inverted)
+    const mapX = (x)=>(x - bounds.minX) * bounds.scale + bounds.padX;
+    const mapY = (y)=>bounds.VIEWPORT_SIZE - ((y - bounds.minY) * bounds.scale + bounds.padY);
     const getNode = (id)=>nodes.find((n)=>n.id === id);
+    // Helper function: Strictly enforce directions and outward placement for Beams
+    const getLoadVectors = (mag1, mag2, n1, n2)=>{
+        const isHorizontal = Math.abs(n2.y - n1.y) < 0.1;
+        const isVertical = Math.abs(n2.x - n1.x) < 0.1;
+        const maxW = Math.max(Math.abs(mag1), Math.abs(mag2));
+        const sign = (mag1 || mag2) > 0 ? 1 : -1;
+        // 1. Force the strict math direction
+        let mathDirX = 0;
+        let mathDirY = 0;
+        const L = Math.hypot(n2.x - n1.x, n2.y - n1.y) || 1;
+        if (isHorizontal) {
+            mathDirY = sign; // Positive = UP
+        } else if (isVertical) {
+            mathDirX = sign; // Positive = RIGHT
+        } else {
+            const normX = -(n2.y - n1.y) / L;
+            const normY = (n2.x - n1.x) / L;
+            mathDirX = normX * sign;
+            mathDirY = normY * sign;
+        }
+        // 2. Convert to SVG directions (Y goes down in SVG)
+        const svgDirX = mathDirX;
+        const svgDirY = -mathDirY;
+        // 3. Determine if this direction naturally points away from the structure center
+        const beamCx = (n1.x + n2.x) / 2;
+        const beamCy = (n1.y + n2.y) / 2;
+        let outX = beamCx - bounds.cx;
+        let outY = beamCy - bounds.cy;
+        // Fallback if the beam is perfectly in the center of the structure
+        if (Math.abs(outX) < 0.1 && Math.abs(outY) < 0.1) {
+            outX = mathDirX;
+            outY = mathDirY;
+        }
+        // Dot product determines if drawing it naturally pushes it INWARD or OUTWARD
+        const isOutward = mathDirX * outX + mathDirY * outY >= 0;
+        return {
+            svgDirX,
+            svgDirY,
+            isOutward,
+            maxW
+        };
+    };
     const svgContent = /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Fragment"], {
         children: [
             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("defs", {
                 children: [
                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("marker", {
-                        id: "arrowhead",
-                        markerWidth: "16",
-                        markerHeight: "12",
-                        refX: "14",
-                        refY: "6",
+                        id: "arrow_node",
+                        markerWidth: "10",
+                        markerHeight: "10",
+                        refX: "9",
+                        refY: "5",
                         orient: "auto",
                         children: /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("polygon", {
-                            points: "0 0, 16 6, 0 12",
+                            points: "0 1, 10 5, 0 9",
                             fill: "#c084fc"
                         }, void 0, false, {
                             fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                            lineNumber: 52,
+                            lineNumber: 109,
                             columnNumber: 11
                         }, this)
                     }, void 0, false, {
                         fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                        lineNumber: 51,
+                        lineNumber: 108,
                         columnNumber: 9
                     }, this),
                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("marker", {
-                        id: "loadhead",
-                        markerWidth: "12",
-                        markerHeight: "9",
-                        refX: "10",
-                        refY: "4.5",
+                        id: "arrow_load",
+                        markerWidth: "8",
+                        markerHeight: "8",
+                        refX: "7",
+                        refY: "4",
                         orient: "auto",
                         children: /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("polygon", {
-                            points: "0 0, 12 4.5, 0 9",
+                            points: "0 1, 8 4, 0 7",
                             fill: "#f472b6"
                         }, void 0, false, {
                             fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                            lineNumber: 55,
+                            lineNumber: 112,
                             columnNumber: 11
                         }, this)
                     }, void 0, false, {
                         fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                        lineNumber: 54,
+                        lineNumber: 111,
                         columnNumber: 9
                     }, this),
                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("marker", {
-                        id: "loadhead_uvl",
-                        markerWidth: "12",
-                        markerHeight: "9",
-                        refX: "10",
-                        refY: "4.5",
+                        id: "arrow_load_uvl",
+                        markerWidth: "8",
+                        markerHeight: "8",
+                        refX: "7",
+                        refY: "4",
                         orient: "auto",
                         children: /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("polygon", {
-                            points: "0 0, 12 4.5, 0 9",
+                            points: "0 1, 8 4, 0 7",
                             fill: "#f87171"
                         }, void 0, false, {
                             fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                            lineNumber: 58,
+                            lineNumber: 115,
                             columnNumber: 11
                         }, this)
                     }, void 0, false, {
                         fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                        lineNumber: 57,
+                        lineNumber: 114,
                         columnNumber: 9
                     }, this),
                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("filter", {
@@ -120,53 +180,78 @@ function StructureVisualizer({ nodes, members }) {
                         height: "200%",
                         children: [
                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("feGaussianBlur", {
-                                stdDeviation: "8",
-                                result: "blur"
+                                in: "SourceGraphic",
+                                stdDeviation: "4",
+                                result: "blur1"
                             }, void 0, false, {
                                 fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                                lineNumber: 63,
+                                lineNumber: 119,
+                                columnNumber: 11
+                            }, this),
+                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("feGaussianBlur", {
+                                in: "SourceGraphic",
+                                stdDeviation: "10",
+                                result: "blur2"
+                            }, void 0, false, {
+                                fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
+                                lineNumber: 120,
+                                columnNumber: 11
+                            }, this),
+                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("feGaussianBlur", {
+                                in: "SourceGraphic",
+                                stdDeviation: "20",
+                                result: "blur3"
+                            }, void 0, false, {
+                                fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
+                                lineNumber: 121,
                                 columnNumber: 11
                             }, this),
                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("feMerge", {
                                 children: [
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("feMergeNode", {
-                                        in: "blur"
+                                        in: "blur3"
                                     }, void 0, false, {
                                         fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                                        lineNumber: 65,
+                                        lineNumber: 123,
                                         columnNumber: 13
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("feMergeNode", {
-                                        in: "blur"
+                                        in: "blur2"
                                     }, void 0, false, {
                                         fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                                        lineNumber: 66,
+                                        lineNumber: 124,
                                         columnNumber: 13
                                     }, this),
-                                    " ",
+                                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("feMergeNode", {
+                                        in: "blur1"
+                                    }, void 0, false, {
+                                        fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
+                                        lineNumber: 125,
+                                        columnNumber: 13
+                                    }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("feMergeNode", {
                                         in: "SourceGraphic"
                                     }, void 0, false, {
                                         fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                                        lineNumber: 67,
+                                        lineNumber: 126,
                                         columnNumber: 13
                                     }, this)
                                 ]
                             }, void 0, true, {
                                 fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                                lineNumber: 64,
+                                lineNumber: 122,
                                 columnNumber: 11
                             }, this)
                         ]
                     }, void 0, true, {
                         fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                        lineNumber: 62,
+                        lineNumber: 118,
                         columnNumber: 9
                     }, this)
                 ]
             }, void 0, true, {
                 fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                lineNumber: 50,
+                lineNumber: 107,
                 columnNumber: 7
             }, this),
             members.map((m)=>{
@@ -177,10 +262,6 @@ function StructureVisualizer({ nodes, members }) {
                 const y1 = mapY(n1.y);
                 const x2 = mapX(n2.x);
                 const y2 = mapY(n2.y);
-                // Calculate Normal Vector for Transverse Load Plotting
-                const L = Math.hypot(x2 - x1, y2 - y1) || 1;
-                const normX = -(y2 - y1) / L;
-                const normY = (x2 - x1) / L;
                 return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("g", {
                     children: [
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("line", {
@@ -189,23 +270,21 @@ function StructureVisualizer({ nodes, members }) {
                             x2: x2,
                             y2: y2,
                             stroke: "#22d3ee",
-                            strokeWidth: "16",
+                            strokeWidth: "6",
                             strokeLinecap: "round",
-                            filter: "url(#glow)",
-                            className: "opacity-90"
+                            filter: "url(#glow)"
                         }, void 0, false, {
                             fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                            lineNumber: 91,
-                            columnNumber: 17
+                            lineNumber: 145,
+                            columnNumber: 13
                         }, this),
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("text", {
                             x: (x1 + x2) / 2,
-                            y: (y1 + y2) / 2 - 25,
+                            y: (y1 + y2) / 2 - 20,
                             fill: "#a5f3fc",
-                            fontSize: "24",
+                            fontSize: "16",
                             fontWeight: "bold",
                             textAnchor: "middle",
-                            className: "font-mono shadow-sm",
                             children: [
                                 "[",
                                 m.id,
@@ -213,30 +292,36 @@ function StructureVisualizer({ nodes, members }) {
                             ]
                         }, void 0, true, {
                             fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                            lineNumber: 98,
-                            columnNumber: 17
+                            lineNumber: 146,
+                            columnNumber: 13
                         }, this),
                         m.udl !== 0 && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("g", {
                             children: (()=>{
-                                const sign = m.udl < 0 ? 1 : -1;
-                                const ox = -normX * sign;
-                                const oy = -normY * sign;
-                                const dl_x1 = x1 + ox * 150;
-                                const dl_y1 = y1 + oy * 150;
-                                const dl_x2 = x2 + ox * 150;
-                                const dl_y2 = y2 + oy * 150;
-                                const textOffY = oy === 0 ? 10 : oy * 35; // manual centering tweaks
+                                const { svgDirX, svgDirY, isOutward } = getLoadVectors(m.udl, m.udl, n1, n2);
+                                const gap = 15;
+                                const length = 60;
+                                // Base drawing coordinates based on inside/outside check
+                                const tailOff = isOutward ? gap : -(gap + length);
+                                const headOff = isOutward ? gap + length : -gap;
+                                // Outer bounding line
+                                const boundingOffset = isOutward ? headOff : tailOff;
+                                const dl_x1 = x1 + svgDirX * boundingOffset;
+                                const dl_y1 = y1 + svgDirY * boundingOffset;
+                                const dl_x2 = x2 + svgDirX * boundingOffset;
+                                const dl_y2 = y2 + svgDirY * boundingOffset;
+                                // Text offset pushes it slightly further out past the boundary
+                                const textOff = isOutward ? headOff + 25 : tailOff - 25;
                                 return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Fragment"], {
                                     children: [
                                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("path", {
                                             d: `M ${dl_x1} ${dl_y1} L ${dl_x2} ${dl_y2}`,
                                             stroke: "#f472b6",
-                                            strokeWidth: "4",
-                                            strokeDasharray: "8,8"
+                                            strokeWidth: "2",
+                                            strokeDasharray: "4,4"
                                         }, void 0, false, {
                                             fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                                            lineNumber: 118,
-                                            columnNumber: 27
+                                            lineNumber: 172,
+                                            columnNumber: 23
                                         }, this),
                                         [
                                             0,
@@ -248,79 +333,70 @@ function StructureVisualizer({ nodes, members }) {
                                         ].map((t, i)=>{
                                             const px = x1 + (x2 - x1) * t;
                                             const py = y1 + (y2 - y1) * t;
-                                            const tailX = px + ox * 150;
-                                            const tailY = py + oy * 150;
-                                            const headX = px + ox * 15;
-                                            const headY = py + oy * 15;
+                                            const startX = px + svgDirX * tailOff;
+                                            const startY = py + svgDirY * tailOff;
+                                            const endX = px + svgDirX * headOff;
+                                            const endY = py + svgDirY * headOff;
                                             return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("line", {
-                                                x1: tailX,
-                                                y1: tailY,
-                                                x2: headX,
-                                                y2: headY,
+                                                x1: startX,
+                                                y1: startY,
+                                                x2: endX,
+                                                y2: endY,
                                                 stroke: "#f472b6",
-                                                strokeWidth: "6",
-                                                markerEnd: "url(#loadhead)"
+                                                strokeWidth: "2",
+                                                markerEnd: "url(#arrow_load)"
                                             }, `udl_${i}`, false, {
                                                 fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                                                lineNumber: 126,
-                                                columnNumber: 36
+                                                lineNumber: 182,
+                                                columnNumber: 32
                                             }, this);
                                         }),
                                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("text", {
-                                            x: (dl_x1 + dl_x2) / 2 + ox * 25,
-                                            y: (dl_y1 + dl_y2) / 2 + textOffY,
+                                            x: (dl_x1 + dl_x2) / 2 + svgDirX * 15,
+                                            y: (dl_y1 + dl_y2) / 2 + svgDirY * 15 + 5,
                                             fill: "#f472b6",
-                                            fontSize: "40",
-                                            fontWeight: "900",
+                                            fontSize: "16",
+                                            fontWeight: "bold",
                                             textAnchor: "middle",
-                                            stroke: "#000",
-                                            strokeWidth: "8",
-                                            style: {
-                                                paintOrder: 'stroke fill'
-                                            },
                                             children: [
                                                 Math.abs(m.udl),
                                                 " N/m"
                                             ]
                                         }, void 0, true, {
                                             fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                                            lineNumber: 128,
-                                            columnNumber: 27
+                                            lineNumber: 185,
+                                            columnNumber: 23
                                         }, this)
                                     ]
                                 }, void 0, true);
                             })()
                         }, void 0, false, {
                             fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                            lineNumber: 104,
-                            columnNumber: 19
+                            lineNumber: 150,
+                            columnNumber: 15
                         }, this),
                         (m.w1 !== 0 || m.w2 !== 0) && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("g", {
                             children: (()=>{
-                                const maxW = Math.max(Math.abs(m.w1), Math.abs(m.w2));
-                                // Flip the UVL sign orientation so it points inwards (Left) for negative loads, 
-                                // aligning with the specific visual expectation of the user's reference image
-                                const sign = m.w1 < 0 || m.w2 < 0 ? -1 : 1;
-                                const ox = -normX * sign;
-                                const oy = -normY * sign;
-                                const h1 = maxW ? Math.abs(m.w1) / maxW * 150 : 0;
-                                const h2 = maxW ? Math.abs(m.w2) / maxW * 150 : 0;
-                                const dl_x1 = x1 + ox * Math.max(15, h1);
-                                const dl_y1 = y1 + oy * Math.max(15, h1);
-                                const dl_x2 = x2 + ox * Math.max(15, h2);
-                                const dl_y2 = y2 + oy * Math.max(15, h2);
-                                const textOffY = oy === 0 ? 10 : oy * 35;
+                                const { svgDirX, svgDirY, isOutward, maxW } = getLoadVectors(m.w1, m.w2, n1, n2);
+                                const gap = 15;
+                                const h1 = maxW ? Math.abs(m.w1) / maxW * 70 : 0;
+                                const h2 = maxW ? Math.abs(m.w2) / maxW * 70 : 0;
+                                const bound1Off = isOutward ? gap + h1 : -(gap + h1);
+                                const bound2Off = isOutward ? gap + h2 : -(gap + h2);
+                                const dl_x1 = x1 + svgDirX * bound1Off;
+                                const dl_y1 = y1 + svgDirY * bound1Off;
+                                const dl_x2 = x2 + svgDirX * bound2Off;
+                                const dl_y2 = y2 + svgDirY * bound2Off;
                                 return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Fragment"], {
                                     children: [
                                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("path", {
                                             d: `M ${dl_x1} ${dl_y1} L ${dl_x2} ${dl_y2}`,
                                             stroke: "#f87171",
-                                            strokeWidth: "4",
-                                            strokeDasharray: "8,8"
+                                            strokeWidth: "2"
                                         }, void 0, false, {
                                             fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                                            lineNumber: 158,
-                                            columnNumber: 27
+                                            lineNumber: 214,
+                                            columnNumber: 23
                                         }, this),
                                         [
                                             0,
@@ -333,38 +409,35 @@ function StructureVisualizer({ nodes, members }) {
                                             const px = x1 + (x2 - x1) * t;
                                             const py = y1 + (y2 - y1) * t;
                                             const currentW = Math.abs(m.w1) * (1 - t) + Math.abs(m.w2) * t;
-                                            if (currentW < 0.1) return null; // zero load points
-                                            const h = maxW ? currentW / maxW * 150 : 0;
-                                            const tailX = px + ox * Math.max(25, h);
-                                            const tailY = py + oy * Math.max(25, h);
-                                            const headX = px + ox * 15;
-                                            const headY = py + oy * 15;
+                                            if (currentW < 0.1) return null;
+                                            const h = maxW ? currentW / maxW * 70 : 0;
+                                            const tailOff = isOutward ? gap : -(gap + h);
+                                            const headOff = isOutward ? gap + h : -gap;
+                                            const startX = px + svgDirX * tailOff;
+                                            const startY = py + svgDirY * tailOff;
+                                            const endX = px + svgDirX * headOff;
+                                            const endY = py + svgDirY * headOff;
                                             return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("line", {
-                                                x1: tailX,
-                                                y1: tailY,
-                                                x2: headX,
-                                                y2: headY,
+                                                x1: startX,
+                                                y1: startY,
+                                                x2: endX,
+                                                y2: endY,
                                                 stroke: "#f87171",
-                                                strokeWidth: "6",
-                                                markerEnd: "url(#loadhead_uvl)"
+                                                strokeWidth: "2",
+                                                markerEnd: "url(#arrow_load_uvl)"
                                             }, `uvl_${i}`, false, {
                                                 fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                                                lineNumber: 169,
-                                                columnNumber: 36
+                                                lineNumber: 231,
+                                                columnNumber: 32
                                             }, this);
                                         }),
                                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("text", {
-                                            x: (dl_x1 + dl_x2) / 2 + ox * 30,
-                                            y: (dl_y1 + dl_y2) / 2 + textOffY,
+                                            x: (dl_x1 + dl_x2) / 2 + svgDirX * 15,
+                                            y: (dl_y1 + dl_y2) / 2 + svgDirY * 15 + 5,
                                             fill: "#f87171",
-                                            fontSize: "32",
-                                            fontWeight: "900",
+                                            fontSize: "16",
+                                            fontWeight: "bold",
                                             textAnchor: "middle",
-                                            stroke: "#000",
-                                            strokeWidth: "6",
-                                            style: {
-                                                paintOrder: 'stroke fill'
-                                            },
                                             children: [
                                                 "UVL: ",
                                                 Math.abs(m.w1),
@@ -373,248 +446,324 @@ function StructureVisualizer({ nodes, members }) {
                                             ]
                                         }, void 0, true, {
                                             fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                                            lineNumber: 171,
-                                            columnNumber: 27
+                                            lineNumber: 234,
+                                            columnNumber: 23
                                         }, this)
                                     ]
                                 }, void 0, true);
                             })()
                         }, void 0, false, {
                             fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                            lineNumber: 137,
-                            columnNumber: 19
+                            lineNumber: 196,
+                            columnNumber: 15
                         }, this)
                     ]
                 }, `m_${m.id}`, true, {
                     fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                    lineNumber: 89,
-                    columnNumber: 15
+                    lineNumber: 143,
+                    columnNumber: 11
                 }, this);
             }),
             nodes.map((n)=>{
                 const nx = mapX(n.x);
                 const ny = mapY(n.y);
-                // Supports
                 const isFixed = n.u === 0 && n.v === 0 && n.theta === 0;
                 const isPinned = n.u === 0 && n.v === 0 && n.theta === 1;
+                const isRollerX = n.u === 1 && n.v === 0 && n.theta === 1;
                 return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("g", {
                     children: [
                         isFixed && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("g", {
                             children: [
                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("line", {
-                                    x1: nx - 30,
-                                    y1: ny + 16,
-                                    x2: nx + 30,
-                                    y2: ny + 16,
+                                    x1: nx - 25,
+                                    y1: ny,
+                                    x2: nx - 25,
+                                    y2: ny + 30,
                                     stroke: "#d4d4d8",
-                                    strokeWidth: "6"
+                                    strokeWidth: "4"
                                 }, void 0, false, {
                                     fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                                    lineNumber: 194,
+                                    lineNumber: 260,
                                     columnNumber: 17
                                 }, this),
                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("line", {
                                     x1: nx - 25,
-                                    y1: ny + 16,
-                                    x2: nx - 35,
-                                    y2: ny + 36,
-                                    stroke: "#d4d4d8",
-                                    strokeWidth: "3"
-                                }, void 0, false, {
-                                    fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                                    lineNumber: 195,
-                                    columnNumber: 17
-                                }, this),
-                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("line", {
-                                    x1: nx - 5,
-                                    y1: ny + 16,
-                                    x2: nx - 15,
-                                    y2: ny + 36,
-                                    stroke: "#d4d4d8",
-                                    strokeWidth: "3"
-                                }, void 0, false, {
-                                    fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                                    lineNumber: 196,
-                                    columnNumber: 17
-                                }, this),
-                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("line", {
-                                    x1: nx + 15,
-                                    y1: ny + 16,
-                                    x2: nx + 5,
-                                    y2: ny + 36,
-                                    stroke: "#d4d4d8",
-                                    strokeWidth: "3"
-                                }, void 0, false, {
-                                    fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                                    lineNumber: 197,
-                                    columnNumber: 17
-                                }, this),
-                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("line", {
-                                    x1: nx + 35,
-                                    y1: ny + 16,
+                                    y1: ny + 15,
                                     x2: nx + 25,
-                                    y2: ny + 36,
+                                    y2: ny + 15,
+                                    stroke: "#d4d4d8",
+                                    strokeWidth: "4"
+                                }, void 0, false, {
+                                    fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
+                                    lineNumber: 261,
+                                    columnNumber: 17
+                                }, this),
+                                [
+                                    -20,
+                                    -10,
+                                    0,
+                                    10,
+                                    20
+                                ].map((off, i)=>/*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("line", {
+                                        x1: nx + off,
+                                        y1: ny + 15,
+                                        x2: nx + off - 8,
+                                        y2: ny + 28,
+                                        stroke: "#d4d4d8",
+                                        strokeWidth: "2"
+                                    }, i, false, {
+                                        fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
+                                        lineNumber: 263,
+                                        columnNumber: 19
+                                    }, this))
+                            ]
+                        }, void 0, true, {
+                            fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
+                            lineNumber: 259,
+                            columnNumber: 15
+                        }, this),
+                        isPinned && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("g", {
+                            children: [
+                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("polygon", {
+                                    points: `${nx},${ny + 6} ${nx - 15},${ny + 25} ${nx + 15},${ny + 25}`,
+                                    fill: "#52525b",
+                                    stroke: "#d4d4d8",
+                                    strokeWidth: "2"
+                                }, void 0, false, {
+                                    fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
+                                    lineNumber: 270,
+                                    columnNumber: 17
+                                }, this),
+                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("line", {
+                                    x1: nx - 25,
+                                    y1: ny + 25,
+                                    x2: nx + 25,
+                                    y2: ny + 25,
                                     stroke: "#d4d4d8",
                                     strokeWidth: "3"
                                 }, void 0, false, {
                                     fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                                    lineNumber: 198,
+                                    lineNumber: 271,
                                     columnNumber: 17
                                 }, this)
                             ]
                         }, void 0, true, {
                             fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                            lineNumber: 193,
+                            lineNumber: 269,
                             columnNumber: 15
                         }, this),
-                        isPinned && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("g", {
-                            children: /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("polygon", {
-                                points: `${nx},${ny} ${nx - 25},${ny + 30} ${nx + 25},${ny + 30}`,
-                                fill: "none",
-                                stroke: "#d4d4d8",
-                                strokeWidth: "5"
-                            }, void 0, false, {
-                                fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                                lineNumber: 203,
-                                columnNumber: 17
-                            }, this)
-                        }, void 0, false, {
+                        isRollerX && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("g", {
+                            children: [
+                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("polygon", {
+                                    points: `${nx},${ny + 6} ${nx - 15},${ny + 20} ${nx + 15},${ny + 20}`,
+                                    fill: "#52525b",
+                                    stroke: "#d4d4d8",
+                                    strokeWidth: "2"
+                                }, void 0, false, {
+                                    fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
+                                    lineNumber: 277,
+                                    columnNumber: 17
+                                }, this),
+                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("circle", {
+                                    cx: nx - 8,
+                                    cy: ny + 24,
+                                    r: "4",
+                                    fill: "#d4d4d8"
+                                }, void 0, false, {
+                                    fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
+                                    lineNumber: 278,
+                                    columnNumber: 17
+                                }, this),
+                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("circle", {
+                                    cx: nx + 8,
+                                    cy: ny + 24,
+                                    r: "4",
+                                    fill: "#d4d4d8"
+                                }, void 0, false, {
+                                    fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
+                                    lineNumber: 279,
+                                    columnNumber: 17
+                                }, this),
+                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("line", {
+                                    x1: nx - 25,
+                                    y1: ny + 28,
+                                    x2: nx + 25,
+                                    y2: ny + 28,
+                                    stroke: "#d4d4d8",
+                                    strokeWidth: "3"
+                                }, void 0, false, {
+                                    fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
+                                    lineNumber: 280,
+                                    columnNumber: 17
+                                }, this)
+                            ]
+                        }, void 0, true, {
                             fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                            lineNumber: 202,
+                            lineNumber: 276,
                             columnNumber: 15
                         }, this),
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("circle", {
                             cx: nx,
                             cy: ny,
-                            r: "14",
+                            r: "8",
                             fill: "#e879f9",
                             stroke: "#fff",
-                            strokeWidth: "4",
-                            filter: "url(#glow)"
+                            strokeWidth: "2"
                         }, void 0, false, {
                             fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                            lineNumber: 208,
+                            lineNumber: 285,
                             columnNumber: 13
                         }, this),
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("text", {
-                            x: nx + 25,
-                            y: ny - 25,
+                            x: nx + 18,
+                            y: ny - 18,
                             fill: "#fff",
-                            fontSize: "24",
-                            fontWeight: "extrabold",
+                            fontSize: "16",
+                            fontWeight: "bold",
                             children: [
-                                "(",
-                                n.id,
-                                ")"
+                                "N",
+                                n.id
                             ]
                         }, void 0, true, {
                             fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                            lineNumber: 209,
+                            lineNumber: 286,
                             columnNumber: 13
                         }, this),
-                        n.H !== 0 && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("g", {
-                            children: [
-                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("line", {
-                                    x1: nx - (n.H > 0 ? 250 : -250),
-                                    y1: ny,
-                                    x2: nx - (n.H > 0 ? 35 : -35),
-                                    y2: ny,
-                                    stroke: "#c084fc",
-                                    strokeWidth: "8",
-                                    markerEnd: "url(#arrowhead)"
-                                }, void 0, false, {
-                                    fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                                    lineNumber: 214,
-                                    columnNumber: 17
-                                }, this),
-                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("text", {
-                                    x: nx - (n.H > 0 ? 270 : -270),
-                                    y: ny - 10,
-                                    fill: "#c084fc",
-                                    fontSize: "40",
-                                    fontWeight: "900",
-                                    stroke: "#000",
-                                    strokeWidth: "8",
-                                    style: {
-                                        paintOrder: 'stroke fill'
-                                    },
-                                    children: [
-                                        n.H,
-                                        " N"
-                                    ]
-                                }, void 0, true, {
-                                    fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                                    lineNumber: 215,
-                                    columnNumber: 17
-                                }, this)
-                            ]
-                        }, void 0, true, {
-                            fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                            lineNumber: 213,
-                            columnNumber: 15
-                        }, this)
+                        n.H !== 0 && (()=>{
+                            const mathDirX = n.H > 0 ? 1 : -1;
+                            const svgDirX = mathDirX;
+                            let outX = n.x - bounds.cx;
+                            if (Math.abs(outX) < 0.1) outX = mathDirX;
+                            const isOutward = mathDirX * outX >= 0;
+                            const gap = 15;
+                            const length = 60;
+                            const tailOff = isOutward ? gap : -(gap + length);
+                            const headOff = isOutward ? gap + length : -gap;
+                            const textOff = isOutward ? headOff + 25 : tailOff - 25;
+                            return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("g", {
+                                children: [
+                                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("line", {
+                                        x1: nx + svgDirX * tailOff,
+                                        y1: ny,
+                                        x2: nx + svgDirX * headOff,
+                                        y2: ny,
+                                        stroke: "#c084fc",
+                                        strokeWidth: "3",
+                                        markerEnd: "url(#arrow_node)"
+                                    }, void 0, false, {
+                                        fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
+                                        lineNumber: 305,
+                                        columnNumber: 21
+                                    }, this),
+                                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("text", {
+                                        x: nx + svgDirX * textOff,
+                                        y: ny - 8,
+                                        fill: "#c084fc",
+                                        fontSize: "16",
+                                        fontWeight: "bold",
+                                        textAnchor: "middle",
+                                        children: [
+                                            Math.abs(n.H),
+                                            " N"
+                                        ]
+                                    }, void 0, true, {
+                                        fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
+                                        lineNumber: 306,
+                                        columnNumber: 21
+                                    }, this)
+                                ]
+                            }, void 0, true, {
+                                fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
+                                lineNumber: 304,
+                                columnNumber: 19
+                            }, this);
+                        })(),
+                        n.V !== 0 && (()=>{
+                            const mathDirY = n.V > 0 ? 1 : -1;
+                            const svgDirY = -mathDirY;
+                            let outY = n.y - bounds.cy;
+                            if (Math.abs(outY) < 0.1) outY = mathDirY;
+                            const isOutward = mathDirY * outY >= 0;
+                            const gap = 15;
+                            const length = 60;
+                            const tailOff = isOutward ? gap : -(gap + length);
+                            const headOff = isOutward ? gap + length : -gap;
+                            const textOff = isOutward ? headOff + 20 : tailOff - 20;
+                            return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("g", {
+                                children: [
+                                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("line", {
+                                        x1: nx,
+                                        y1: ny + svgDirY * tailOff,
+                                        x2: nx,
+                                        y2: ny + svgDirY * headOff,
+                                        stroke: "#c084fc",
+                                        strokeWidth: "3",
+                                        markerEnd: "url(#arrow_node)"
+                                    }, void 0, false, {
+                                        fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
+                                        lineNumber: 327,
+                                        columnNumber: 21
+                                    }, this),
+                                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("text", {
+                                        x: nx + 15,
+                                        y: ny + svgDirY * textOff,
+                                        fill: "#c084fc",
+                                        fontSize: "16",
+                                        fontWeight: "bold",
+                                        dominantBaseline: "middle",
+                                        children: [
+                                            Math.abs(n.V),
+                                            " N"
+                                        ]
+                                    }, void 0, true, {
+                                        fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
+                                        lineNumber: 328,
+                                        columnNumber: 21
+                                    }, this)
+                                ]
+                            }, void 0, true, {
+                                fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
+                                lineNumber: 326,
+                                columnNumber: 19
+                            }, this);
+                        })()
                     ]
                 }, `n_${n.id}`, true, {
                     fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                    lineNumber: 191,
+                    lineNumber: 256,
                     columnNumber: 11
                 }, this);
             })
         ]
     }, void 0, true);
     return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-        className: "w-full relative rounded-3xl border border-white/20 bg-black/60 shadow-[inset_0_5px_30px_rgba(0,0,0,0.8)] p-6 flex flex-col items-center group overflow-hidden",
-        children: [
-            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                className: "absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10 rounded-3xl pointer-events-none"
+        className: "w-full relative rounded-xl border border-zinc-800 bg-zinc-950 p-4 flex flex-col items-center overflow-hidden",
+        children: !nodes || nodes.length === 0 ? /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
+            className: "h-[400px] flex items-center justify-center text-zinc-600 font-mono text-sm",
+            children: "AWAITING GEOMETRY DATA..."
+        }, void 0, false, {
+            fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
+            lineNumber: 341,
+            columnNumber: 9
+        }, this) : /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
+            className: "w-full max-w-4xl flex items-center justify-center p-4",
+            children: /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("svg", {
+                viewBox: `0 0 ${bounds.VIEWPORT_SIZE} ${bounds.VIEWPORT_SIZE}`,
+                className: "w-full h-auto max-h-[700px]",
+                children: svgContent
             }, void 0, false, {
                 fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                lineNumber: 226,
-                columnNumber: 7
-            }, this),
-            !nodes || nodes.length === 0 ? /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                className: "h-[400px] flex items-center justify-center text-zinc-500 font-mono tracking-widest text-sm",
-                children: "AWAITING GEOMETRY DATA..."
-            }, void 0, false, {
-                fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                lineNumber: 229,
-                columnNumber: 9
-            }, this) : /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                className: "w-full h-full flex items-center justify-center",
-                children: /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("svg", {
-                    viewBox: `0 0 ${V_WIDTH} ${V_HEIGHT}`,
-                    preserveAspectRatio: "xMidYMid meet",
-                    className: "w-full h-auto max-h-[600px] drop-shadow-[0_0_25px_rgba(34,211,238,0.3)]",
-                    children: svgContent
-                }, void 0, false, {
-                    fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                    lineNumber: 234,
-                    columnNumber: 11
-                }, this)
-            }, void 0, false, {
-                fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                lineNumber: 233,
-                columnNumber: 9
-            }, this),
-            nodes?.length > 0 && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                className: "absolute top-6 left-6 bg-black/60 px-4 py-2 rounded-lg border border-white/10 backdrop-blur-sm pointer-events-none",
-                children: /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$OneDrive$2f$Desktop$2f$ASA__Lab__Project$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
-                    className: "text-cyan-300 text-xs font-mono font-bold tracking-widest",
-                    children: "STRUCTURE CANVAS"
-                }, void 0, false, {
-                    fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                    lineNumber: 242,
-                    columnNumber: 11
-                }, this)
-            }, void 0, false, {
-                fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-                lineNumber: 241,
-                columnNumber: 9
+                lineNumber: 346,
+                columnNumber: 11
             }, this)
-        ]
-    }, void 0, true, {
+        }, void 0, false, {
+            fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
+            lineNumber: 345,
+            columnNumber: 9
+        }, this)
+    }, void 0, false, {
         fileName: "[project]/OneDrive/Desktop/ASA Lab Project/frontend/src/components/StructureVisualizer.tsx",
-        lineNumber: 225,
+        lineNumber: 339,
         columnNumber: 5
     }, this);
 }
